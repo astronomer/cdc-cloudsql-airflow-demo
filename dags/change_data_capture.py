@@ -7,16 +7,19 @@ import os
 from plugins.gcp_custom.operators.gcp_cloudsql_export_operator import (
     CloudSqlCsvExportOperator
 )
+from airflow.models import Variable
 
 ROOT_DIR = os.getenv('AIRFLOW_HOME')
-TEMPLATES_DIR = f'{ROOT_DIR}/include/template'
-gcp_conn_id = 'cloud_sql_api_connection'
-db_instance_id = 'your_db_instance_id'
-gcp_project_id = 'your_db_project_id'
-db_name = 'your_db_name'
-gcs_bucket = 'your_gcs_bucket'
+TEMPLATES_DIR = f'{ROOT_DIR}/include/templates'
+dag_configs = Variable.get('cloud_sql_cdc_config',
+                            deserialize_json=True)
+gcp_conn_id = dag_configs.get('gcp_conn_id')
+db_instance_id = dag_configs.get('db_instance_id')
+gcp_project_id = dag_configs.get('gcp_project_id')
+db_name = dag_configs.get('db_name')
+gcs_bucket = dag_configs.get('gcs_bucket')
+offload_export = dag_configs.get('offload_export')
 gcs_root = f'{gcs_bucket}/cloudsql_export'
-offload_export = False # True for serverless, more expensive and longer running, but offloads completely
 
 default_args = {
     'owner': 'airflow',
