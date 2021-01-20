@@ -3,6 +3,20 @@ from airflow import DAG
 from airflow.operators.dummy_operator import DummyOperator
 from airflow.operators.bash_operator import BashOperator
 from datetime import datetime, timedelta
+import os
+from plugins.gcp_custom.operators.gcp_cloudsql_export_operator import (
+    CloudSqlCsvExportOperator
+)
+
+ROOT_DIR = os.getenv('AIRFLOW_HOME')
+TEMPLATES_DIR = f'{ROOT_DIR}/include/template'
+gcp_conn_id = 'cloud_sql_api_connection'
+db_instance_id = 'your_db_instance_id'
+gcp_project_id = 'your_db_project_id'
+db_name = 'your_db_name'
+gcs_bucket = 'your_gcs_bucket'
+gcs_root = f'{gcs_bucket}/cloudsql_export'
+offload_export = False # True for serverless, more expensive and longer running, but offloads completely
 
 default_args = {
     'owner': 'airflow',
@@ -19,6 +33,7 @@ with DAG('change_data_capture_cloud_sql',
           max_active_runs=1, # Ensure one at a time
           schedule_interval=None, # Start with None for manual trigger, change to '@hourly'
           catchup=False, # If True, it will start historically to start_date
+          template_searchpath=TEMPLATES_DIR, # Add this
           start_date=datetime(2020, 12, 29, 0, 0, 0),
           default_args=default_args) as dag:
         
@@ -38,25 +53,64 @@ with DAG('change_data_capture_cloud_sql',
         trigger_rule='all_success'
     )
     
-    get_schema = BashOperator(
-        task_id='get_schema',
-        bash_command='echo "getting schema"',
-        trigger_rule='one_success',
-        pool = 'cloudsql_operations'
+    gcs_schema_keypath = (
+        f"{gcs_root}/"
+        "schemas/"
+        "{{execution_date.year}}/"
+        "{{execution_date.month}}/"
+        "{{execution_date.day}}/"
+        f"{db_name}/"
+        f"{db_name}_schema_"
+        "{{ts_nodash}}.csv"
+    )
+
+    get_schema = CloudSqlCsvExportOperator(
+        task_id = 'get_schema',
+        gcp_conn_id = gcp_conn_id,
+        database_instance = db_instance_id,
+        project_id = gcp_project_id,
+        database_name = db_name,
+        gcs_bucket = gcs_bucket,
+        gcs_keypath = gcs_schema_keypath,
+        offload = offload_export,
+        params = {
+            "tables": tables
+        },
+        export_sql = 'cloud_sql_cdc/export_csv/get_schema.sql',
+        pool = 'cloudsql_operations',
+        trigger_rule = 'one_success'
     )
      
     complete_dag = DummyOperator(task_id='complete_dag')
 
     for table in tables:
 
-        export_table = BashOperator(
-            task_id=f'export_{table}',
-            bash_command=f'echo "exporting {table}"',
-            trigger_rule='one_success',
-            pool = 'cloudsql_operations'
+        gcs_raw_keypath = (
+            f"{gcs_root}/"
+            "raw/"
+            f"{table}/"
+            "{{execution_date.year}}/"
+            "{{execution_date.month}}/"
+            "{{execution_date.day}}/"
+            f"{table}_"
+            "{{ts_nodash}}.csv"
         )
 
-        get_schema >> export_table >> complete_export  
+        export_table = CloudSqlCsvExportOperator(
+            task_id = f'export_{table}',
+            gcp_conn_id = gcp_conn_id,
+            database_instance = db_instance_id,
+            project_id = gcp_project_id,
+            database_name = db_name,
+            gcs_bucket = gcs_bucket,
+            gcs_keypath = gcs_raw_keypath,
+            offload = offload_export,
+            export_sql = f'cloud_sql_cdc/export_csv/{table}.sql',
+            pool = 'cloudsql_operations',
+            trigger_rule = 'one_success'
+        )
+
+        get_schema >> export_table >> complete_export
         
     kickoff_dag >> start_export >> get_schema
     complete_export >> complete_dag
