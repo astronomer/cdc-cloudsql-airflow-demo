@@ -1,3 +1,4 @@
 .git
 .env
 airflow_settings.yaml
+__pycache__
