@@ -31,7 +31,7 @@ default_args = {
 # Name DAG with the first argument
 with DAG('change_data_capture_cloud_sql',
           max_active_runs=1, # Ensure one at a time
-          schedule_interval=None, # Start with None for manual trigger, change to '@hourly'
+          schedule_interval = '@hourly', # Start with None for manual trigger, change to '@hourly'
           catchup=False, # If True, it will start historically to start_date
           template_searchpath=TEMPLATES_DIR, # Add this
           start_date=datetime(2020, 12, 29, 0, 0, 0),
